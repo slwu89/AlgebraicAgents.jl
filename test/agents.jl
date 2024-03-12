@@ -20,7 +20,7 @@ using Test, AlgebraicAgents
 
     @test fieldnames(DerivedAgent) ==
           (:uuid, :name, :parent, :inners, :relpathrefs, :opera, :mutable1,
-           :mutable2, :mutable3, :mutable4)
+        :mutable2, :mutable3, :mutable4)
 
     @test fieldtype(DerivedAgent, :mutable2) == Int
     @test fieldtype(DerivedAgent, :mutable4) == Int
@@ -52,15 +52,15 @@ using Test, AlgebraicAgents
             @test BaseAgent_w_immutables <: AbstractAlgebraicAgent
             @test fieldnames(BaseAgent_w_immutables) ==
                   (:uuid, :name, :parent, :inners, :relpathrefs, :opera, :mutable1,
-                   :mutable2, :immutable1, :immutable2)
+                :mutable2, :immutable1, :immutable2)
             @test isconst(BaseAgent_w_immutables, :immutable1)
             @test !isconst(BaseAgent_w_immutables, :mutable1)
             @test fieldtype(BaseAgent_w_immutables, :mutable2) == Int
 
             @test fieldnames(DerivedAgent_w_immutables) ==
                   (:uuid, :name, :parent, :inners, :relpathrefs, :opera, :mutable1,
-                   :mutable2, :immutable1, :immutable2, :mutable3, :mutable4, :immutable3,
-                   :immutable4)
+                :mutable2, :immutable1, :immutable2, :mutable3, :mutable4, :immutable3,
+                :immutable4)
             @test isconst(DerivedAgent_w_immutables, :immutable1)
             @test !isconst(DerivedAgent_w_immutables, :mutable1)
             @test fieldtype(DerivedAgent_w_immutables, :mutable2) == Int
@@ -89,4 +89,51 @@ end
     @test myagent[:] == collect(values(inners(myagent)))
     @test_throws ArgumentError myagent[1]
     @test_throws KeyError myagent["bbb"]
+end
+
+@testset "saving and loading" begin
+    @aagent struct MyAgentLoadsave
+        field::Any
+    end
+
+    system = MyAgentLoadsave("agent1", 1) ⊕ MyAgentLoadsave("agent2", 2)
+    system_dump = AlgebraicAgents.save(system)
+
+    @test system_dump == Dict{String, Any}("name" => "diagram",
+        "inners" => Dict{String, Any}[
+            Dict("name" => "agent1",
+                "arguments" => [1],
+                "type" => MyAgentLoadsave),
+            Dict("name" => "agent2", "arguments" => [2], "type" => MyAgentLoadsave)],
+        "type" => FreeAgent)
+
+    system_reloaded = AlgebraicAgents.load(system_dump; eval_scope = @__MODULE__)
+
+    @test system_reloaded isa FreeAgent
+    @test getname(system_reloaded) == "diagram"
+
+    @test length(inners(system_reloaded)) == 2
+
+    agent1 = inners(system_reloaded)["agent1"]
+    @test agent1 isa MyAgentLoadsave
+    @test getname(agent1) == "agent1"
+    @test agent1.field == 1
+
+    system_dump["inners"][1]["type"] = "MyAgentLoadsave"
+    system_reloaded = AlgebraicAgents.load(system_dump; eval_scope = @__MODULE__)
+    agent1 = inners(system_reloaded)["agent1"]
+    @test agent1 isa MyAgentLoadsave
+
+    opera_dump = Dict(
+        "instantious" => [
+            Dict("call" => () -> println("instantious interaction"))
+        ],
+        "futures" => [Dict("time" => 2.0, "call" => () -> println("future"))],
+        "controls" => [Dict("call" => () -> println("control"))])
+    push!(system_dump, "opera" => opera_dump)
+    system_reloaded = AlgebraicAgents.load(system_dump; eval_scope = @__MODULE__)
+
+    @test length(getopera(system_reloaded).instantious_interactions) == 1
+    @test length(getopera(system_reloaded).futures) == 1
+    @test length(getopera(system_reloaded).controls) == 1
 end

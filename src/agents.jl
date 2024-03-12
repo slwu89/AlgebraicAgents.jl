@@ -17,8 +17,9 @@ function define_agent(base_type, super_type, type, __module, constructor)
             # Here we collect the field names and types from the base type
             # Because the base type already exists, we escape the symbols to obtain it
             base_fieldnames = fieldnames($(esc(base_type)))
-            base_fieldtypes = [t for t in getproperty($(esc(base_type)), :types)]
-            base_fields = map(zip(base_fieldnames, base_fieldtypes)) do (f, T)
+            base_fieldtypes = getproperty($(esc(base_type)), :types)
+            base_fields = map(zip(base_fieldnames, base_fieldtypes)) do x
+                f, T = x # due to https://github.com/Merck/AlgebraicAgents.jl/issues/38
                 if (VERSION < v"1.8") || !(isconst($(esc(base_type)), f))
                     :($f::$T)
                 else
@@ -43,11 +44,12 @@ function define_agent(base_type, super_type, type, __module, constructor)
                     $$(QuoteNode(constructor))
                 end
             end
+
             # it is important to evaluate the macro in the module of the toplevel eval
             Base.eval($__module, expr)
         end
 
-        Core.@__doc__($(esc(Docs.namify(new_name))))
+        Core.@__doc__($__module.$(Docs.namify(new_name)))
         nothing
     end
 end
@@ -120,39 +122,42 @@ function aagent(base_type, super_type, type, __module)
     tname_plain = tname isa Symbol ? tname : tname.args[1]
 
     constructor = define_agent(base_type, super_type, type, __module,
-                               quote
-                                   function $(tname)(name::AbstractString,
-                                                     args...) where {
-                                                                     $(param_tnames_constraints...)
-                                                                     }
-                                       uuid = AlgebraicAgents.uuid4()
-                                       inners = Dict{String, AbstractAlgebraicAgent}()
-                                       relpathrefs = Dict{AbstractString,
-                                                          AlgebraicAgents.UUID}()
-                                       opera = AlgebraicAgents.Opera()
+        quote
+            function $(tname)(name::AbstractString,
+                    args...) where {
+                    $(param_tnames_constraints...),
+            }
+                uuid = AlgebraicAgents.uuid4()
+                inners = Dict{String, AbstractAlgebraicAgent}()
+                relpathrefs = Dict{AbstractString,
+                    AlgebraicAgents.UUID}()
+                opera = AlgebraicAgents.Opera()
 
-                                       # if an extra field is missing, provide better error message
-                                       extra_fields = setdiff(fieldnames($tname_plain),
-                                                              $common_interface_fields)
-                                       if length(args) != length(extra_fields)
-                                           @error "agent type $($tname_plain) expects fields $extra_fields, but only $(length(args)) were given"
-                                       end
+                # if an extra field is missing, provide better error message
+                extra_fields = setdiff(fieldnames($tname_plain),
+                    $common_interface_fields)
+                if length(args) != length(extra_fields)
+                    error("""the agent type $($tname_plain) default constructor `$($tname_plain)(name, args...)` expects $(length(extra_fields)) arguments for custom fields $extra_fields, but $(length(args)) arguments were given.
 
-                                       # initialize agent
-                                       agent = new(uuid, name, nothing, inners, relpathrefs,
-                                                   opera, args...)
-                                       # push ref to opera
-                                       push!(agent.opera.directory, agent.uuid => agent)
+                          If you intended to call a custom constructor and you passed a string as the first variable, please check that the custom constructor declares the type of the first positional argument to be `AbstractString` (so that dynamic dispatch works).
+                          """)
+                end
 
-                                       agent
-                                   end
-                               end)
+                # initialize agent
+                agent = new(uuid, name, nothing, inners, relpathrefs,
+                    opera, args...)
+                # push ref to opera
+                push!(agent.opera.directory, agent.uuid => agent)
+
+                agent
+            end
+        end)
 
     quote
         # check if the base type implements the common interface fields
         check = quote
             if !all(f -> f ∈ fieldnames($$(esc(base_type))), $$(common_interface_fields))
-                @error "type $($$(esc(base_type))) does not implement common interface fields $($$(common_interface_fields))"
+                error("type $($$(esc(base_type))) does not implement common interface fields $($$(common_interface_fields))")
             end
         end
         Base.eval($__module, check)

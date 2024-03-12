@@ -2,15 +2,19 @@
 
 ## action types
 const InstantiousInteraction = NamedTuple{(:id, :call, :priority),
-                                          <:Tuple{AbstractString, Function, Number}}
+    <:Tuple{AbstractString, Function, Number}}
 const InstantiousInteractionLog = NamedTuple{(:id, :time, :retval),
-                                             <:Tuple{AbstractString, Number, Any}}
+    <:Tuple{AbstractString, Number, Any}}
 const Future = NamedTuple{(:id, :call, :time),
-                          <:Tuple{AbstractString, Function, Any}}
+    <:Tuple{AbstractString, Function, Any}}
 const FutureLog = NamedTuple{(:id, :time, :retval),
-                             <:Tuple{AbstractString, Any, Any}}
+    <:Tuple{AbstractString, Any, Any}}
 const Control = NamedTuple{(:id, :call), <:Tuple{AbstractString, Function}}
 const ControlLog = NamedTuple{(:id, :time, :retval), <:Tuple{AbstractString, Any, Any}}
+
+## wire type
+const Wire = NamedTuple{(:from, :from_var_name, :to, :to_var_name),
+    <:Tuple{AbstractAlgebraicAgent, Any, AbstractAlgebraicAgent, Any}}
 
 """
     Opera(uuid2agent_pairs...)
@@ -96,6 +100,8 @@ mutable struct Opera
     controls::Vector{Control}
     controls_log::Vector{ControlLog}
     n_controls::Ref{UInt}
+    # wires
+    wires::Vector{Wire}
 
     function Opera(uuid2agent_pairs...)
         new(Dict{UUID, AbstractAlgebraicAgent}(uuid2agent_pairs...),
@@ -107,7 +113,8 @@ mutable struct Opera
             0,
             Vector{Control}(undef, 0),
             Vector{ControlLog}(undef, 0),
-            0)
+            0,
+            Vector{Wire}(undef, 0))
     end
 end
 
@@ -124,8 +131,8 @@ function call(opera::Opera, call::Function)
     elseif hasmethod(call, Tuple{Opera})
         call(opera)
     elseif length(opera.directory) > 1 &&
-           hasmethod(call, Tuple{typeof(topmost(first(opera.directory).value))})
-        call(topmost(first(opera.directory).value))
+           hasmethod(call, Tuple{typeof(topmost(first(opera.directory)[2]))})
+        call(topmost(first(opera.directory)[2]))
     else
         @error """interaction $call must have one of the following forms:
             - be parameterless,
@@ -150,8 +157,8 @@ add_instantious!(agent, () -> wake_up(agent))
 ```
 """
 function add_instantious!(opera::Opera, call, priority::Number = 0.0,
-                          id = "instantious_" *
-                               get_count(opera, :n_instantious_interactions))
+        id = "instantious_" *
+             get_count(opera, :n_instantious_interactions))
     add_instantious!(opera, (; id, call, priority))
 end
 
@@ -162,7 +169,7 @@ end
 function add_instantious!(opera::Opera, action::InstantiousInteraction)
     # sorted insert
     insert_at = searchsortedfirst(opera.instantious_interactions, action;
-                                  by = x -> x.priority)
+        by = x -> x.priority)
     insert!(opera.instantious_interactions, insert_at, action)
 end
 
@@ -191,10 +198,10 @@ poke(agent, 1.) # with priority equal to 1
 ```
 """
 function poke(agent, priority::Number = 0.0,
-              id = "instantious_" * get_count(getopera(agent), :n_instantious_interactions))
+        id = "instantious_" * get_count(getopera(agent), :n_instantious_interactions))
     add_instantious!(getopera(agent),
-                     (; id, call = () -> _interact!(agent),
-                      priority = Float64(priority)))
+        (; id, call = () -> _interact!(agent),
+            priority = Float64(priority)))
 end
 
 """
@@ -223,8 +230,8 @@ macro call(opera, call, priority::Number = 0.0, id = nothing)
         end
 
         add_instantious!(opera,
-                         (; id, call = () -> $(esc(call)),
-                          priority = Float64($(esc(priority)))))
+            (; id, call = () -> $(esc(call)),
+                priority = Float64($(esc(priority)))))
     end
 end
 
@@ -251,7 +258,7 @@ add_future!(alice, 5.0, () -> interact(alice), "alice_schedule")
 function add_future! end
 
 function add_future!(opera::Opera, time, call,
-                     id = "future_" * get_count(opera, :n_futures))
+        id = "future_" * get_count(opera, :n_futures))
     new_action = (; id, call, time)
 
     # sorted insert
@@ -290,7 +297,7 @@ macro future(opera, time, call, id = nothing)
         end
 
         add_future!(opera, $(esc(time)), () -> $(esc(call)),
-                    id)
+            id)
     end
 end
 
@@ -386,4 +393,64 @@ function execute_controls!(opera::Opera, time)
         log_record = (; id = action.id, time, retval = call(opera, action.call))
         push!(opera.controls_log, log_record)
     end
+end
+
+# if `expr` is a string, parse it as an expression
+function get_expr(expr; eval_scope = @__MODULE__)
+    if expr isa AbstractString
+        Base.eval(eval_scope, Meta.parseall(expr))
+    else
+        expr
+    end
+end
+
+"""
+    load_opera!(opera, dump; eval_scope=@__MODULE__)
+Load interactions from a dictionary that contains the entries `instantious`, `futures`, and `controls`.
+Each of these entries is a vector defining the respective interactions.
+
+- `instantious` ([`InstantiousInteraction`](@ref)): specify `call` and, optionally, `priority=0` and `id`,
+- `futures` ([`Future`](@ref)): specify `time`, `call`, and, optionally, `id`,
+- `controls` ([`Control`](@ref)): specify `call` and, optionally, `id`.
+
+# Example
+```julia
+system_dump = AlgebraicAgents.save(system)
+
+opera_dump = Dict(
+    "instantious" => [Dict("call" => () -> println("instantious interaction"))],
+    "futures" => [Dict("time" => 2., "call" => () -> println("future"))],
+    "controls" => [Dict("call" => () -> println("control"))]
+)
+
+push!(system_dump, "opera" => opera_dump)
+```
+"""
+function load_opera!(opera::Opera, dump::AbstractDict; eval_scope = @__MODULE__)
+    # instantious interactions
+    for interaction in get(dump, "instantious", [])
+        add_instantious!(opera,
+            get_expr(interaction["call"]; eval_scope),
+            get(interaction, "priority", 0),
+            get(interaction,
+                "id",
+                "instantious_" * get_count(opera, :n_instantious_interactions)))
+    end
+
+    # futures
+    for interaction in get(dump, "futures", [])
+        add_future!(opera,
+            interaction["time"],
+            get_expr(interaction["call"]; eval_scope),
+            get(interaction, "id", "future_" * get_count(opera, :n_futures)))
+    end
+
+    # controls
+    for interaction in get(dump, "controls", [])
+        add_control!(opera,
+            get_expr(interaction["call"]; eval_scope),
+            get(interaction, "id", "control_" * get_count(opera, :n_controls)))
+    end
+
+    return opera
 end

@@ -1,5 +1,8 @@
 import .AlgebraicDynamics
 
+using .AlgebraicDynamics.DWDDynam: oapply
+using .AlgebraicDynamics.UWDDynam: oapply
+
 export GraphicalAgent
 
 const AbstractResourceSharer = AlgebraicDynamics.UWDDynam.AbstractResourceSharer
@@ -24,7 +27,7 @@ GraphicalAgent("rabbit", ContinuousMachine{Float64}(1,1,1, dotr, (u, p, t) -> u)
 end
 
 function wrap_system(name::AbstractString, sharer::GraphicalModelType, args...;
-                     kwargs...)
+        kwargs...)
     GraphicalAgent(name, sharer, args...; kwargs...)
 end
 
@@ -59,10 +62,10 @@ Apply `oapply(diagram, systems...)` and wrap the result as a `GraphicalAgent`.
 
 @doc sum_algebraicdynamics_docstring
 function ⊕(x::Vector{M}; diagram, pushout = nothing,
-           name = "diagram") where {M <: GraphicalAgent}
+        name = "diagram") where {M <: GraphicalAgent}
     x_ = map(x -> x.system, x)
-    m = isnothing(pushout) ? AlgebraicDynamics.oapply(diagram, x_) :
-        AlgebraicDynamics.oapply(diagram, x, pushout)
+    m = isnothing(pushout) ? oapply(diagram, x_) :
+        oapply(diagram, x, pushout)
     m = GraphicalAgent(name, m)
     for x in x
         entangle!(m, x)
@@ -73,10 +76,10 @@ end
 
 @doc sum_algebraicdynamics_docstring
 function ⊕(x::Vararg{M}; diagram, pushout = nothing,
-           name = "diagram") where {M <: GraphicalAgent}
+        name = "diagram") where {M <: GraphicalAgent}
     x_ = map(x -> x.system, collect(x))
-    m = isnothing(pushout) ? AlgebraicDynamics.oapply(diagram, x_) :
-        AlgebraicDynamics.oapply(diagram, x, pushout)
+    m = isnothing(pushout) ? oapply(diagram, x_) :
+        oapply(diagram, x, pushout)
     m = GraphicalAgent(name, m)
     for x in x
         entangle!(m, x)
@@ -88,8 +91,8 @@ end
 @doc sum_algebraicdynamics_docstring
 function ⊕(x::GraphicalAgent; diagram, pushout = nothing, name = "diagram")
     x_ = x.system
-    m = isnothing(pushout) ? AlgebraicDynamics.oapply(diagram, x_) :
-        AlgebraicDynamics.oapply(diagram, x, pushout)
+    m = isnothing(pushout) ? oapply(diagram, x_) :
+        oapply(diagram, x, pushout)
     m = GraphicalAgent(name, m)
     entangle!(m, x)
 
@@ -98,10 +101,10 @@ end
 
 @doc sum_algebraicdynamics_docstring
 function ⊕(x::AbstractDict{S, M}; diagram, pushout = nothing,
-           name = "diagram") where {S, M <: GraphicalAgent}
+        name = "diagram") where {S, M <: GraphicalAgent}
     x_ = Dict(x -> x[1] => x[2].system, x)
-    m = isnothing(pushout) ? AlgebraicDynamics.oapply(diagram, x_) :
-        AlgebraicDynamics.oapply(diagram, x, pushout)
+    m = isnothing(pushout) ? oapply(diagram, x_) :
+        oapply(diagram, x, pushout)
     m = GraphicalAgent(name, m)
     for x in value(x)
         entangle!(m, x)

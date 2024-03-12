@@ -25,7 +25,7 @@ mutable struct FreeAgent <: AbstractAlgebraicAgent
     ```
     """
     function FreeAgent(name::AbstractString,
-                       agents::Vector{<:AbstractAlgebraicAgent} = AbstractAlgebraicAgent[])
+            agents::Vector{<:AbstractAlgebraicAgent} = AbstractAlgebraicAgent[])
         m = new()
         m.uuid = uuid4()
         m.name = name
@@ -115,7 +115,7 @@ function _setparameters!(a::AbstractAlgebraicAgent, parameters)
     elseif params isa AbstractArray
         params .= parameters
     else
-        @error("type $(typeof(a)) doesn't implement `_setparameters!`")
+        error("type $(typeof(a)) doesn't implement `_setparameters!`")
     end
 
     params
@@ -224,7 +224,7 @@ end
 
 "Return time to which agent's evolution was projected."
 function _projected_to(t::AbstractAlgebraicAgent)
-    @error("type $(typeof(t)) doesn't implement `_projected_to`")
+    error("type $(typeof(t)) doesn't implement `_projected_to`")
 end
 
 _projected_to(::FreeAgent) = nothing
@@ -342,18 +342,18 @@ end
 function print_header(io::IO, a::AbstractAlgebraicAgent)
     indent = get(io, :indent, 0)
     print(io,
-          " "^indent *
-          "$(typeof(a)){name=$(getname(a)), uuid=$(string(getuuid(a))[1:8]), parent=$(getparent(a))}")
+        " "^indent *
+        "$(typeof(a)){name=$(getname(a)), uuid=$(string(getuuid(a))[1:8]), parent=$(getparent(a))}")
 end
 
 "Pretty-print agent's parent and inners. Optionally specify indent."
 function print_neighbors(io::IO, m::MIME"text/plain", a::AbstractAlgebraicAgent,
-                         expand_inners = true)
+        expand_inners = true)
     indent = get(io, :indent, 0)
 
     expand_inners && !isnothing(getparent(a)) &&
         print(io, "\n", " "^(indent + 3), crayon"bold", "parent: ", crayon"reset",
-              crayon"green", getname(getparent(a)), crayon"reset")
+            crayon"green", getname(getparent(a)), crayon"reset")
     !isempty(values(inners(a))) &&
         print(io, "\n", " "^(indent + 3), crayon"bold", "inner agents: ", crayon"reset")
 
@@ -365,8 +365,8 @@ function print_neighbors(io::IO, m::MIME"text/plain", a::AbstractAlgebraicAgent,
             show(iio, m, a, false)
         end
         (length(inners(a)) > max_inners) && print(io,
-              "\n" * " "^(indent + 4) *
-              "$(length(inners(a))-max_inners) more agent(s) not shown ...")
+            "\n" * " "^(indent + 4) *
+            "$(length(inners(a))-max_inners) more agent(s) not shown ...")
     else
         print(io, join([getname(a) for a in values(inners(a))], ", "))
     end
@@ -382,24 +382,19 @@ function print_custom(io::IO, mime::MIME"text/plain", a::AbstractAlgebraicAgent)
     print(io, "\n", " "^(indent + 3), "custom properties:")
     for field in extra_fields
         print(io, "\n", " "^(indent + 3), AlgebraicAgents.crayon"italics", field, ": ",
-              AlgebraicAgents.crayon"reset", getproperty(a, field))
+            AlgebraicAgents.crayon"reset", getproperty(a, field))
     end
 end
 
 # specialize show method
 function Base.show(io::IO, m::MIME"text/plain", a::AbstractAlgebraicAgent,
-                   expand_inners = true)
+        expand_inners = true)
     print_header(io, m, a)
     print_custom(io, m, a)
     print_neighbors(io, m, a, expand_inners)
 end
 
 Base.show(io::IO, a::AbstractAlgebraicAgent) = print_header(io, a)
-
-#function Base.print(io::IO, a::AbstractAlgebraicAgent)
-#    indent = get(io, :indent, 0)
-#    print(io, " "^indent * "$(typeof(a)){name=$(getname(a)), uuid=$(string(getuuid(a))[1:8]), parent=$(getparent(a))}")
-#end
 
 "Plot an agent's state. For internal implementation, see [`_draw`](@ref)."
 function draw end
@@ -416,4 +411,106 @@ end
 "Return plot of an agent's state. Defaults to `nothing`."
 function _draw(a::AbstractAlgebraicAgent)
     @warn "`_draw` for agent type $(typeof(a)) not implemented"
+end
+
+"""
+    load(hierarchy; eval_scope=Main)
+Instantiate an agent hierarchy from a dictionary.
+
+By default, each agent is represented as a dictionary with fields
+- `type`: type of the agent, this can be a string containing the type name or the actual type,
+- `name`: name of the agent,
+- `arguments` (unless empty): a vector of agent's properties, excluding common interface properties (such as `name`, `uuid`, `parent`, `opera`, etc.)
+- `inners` (unless empty): a vector with inner agents' representations.
+
+For example,
+```julia
+Dict(
+    "type" => FreeAgent, "name" => "system", 
+    "inners" => [
+        Dict("name" => "alice", "type" => MyAgent{Float64}, "arguments" => Any[0.0, 1.0]),
+        Dict("name" => "bob", "type" => MyAgent{Float64}, "arguments" => Any[0.0, 1.5]),
+    ]
+)
+```
+
+Internally, the method retrieves the type of the encapsulating agent from the provided `hierarchy` dictionary and then calls `_load(type, hierarchy; eval_scope)` on it.
+This process instantiates the encapsulating agent as well as all the associated inner agents contained within the `hierarchy`.
+
+See also [`load`](@ref).
+"""
+function load(hierarchy::AbstractDict; eval_scope = Main)
+    type = if hierarchy["type"] isa Type
+        hierarchy["type"]
+    else
+        # convert the type name into the actual type for further processing
+        Base.eval(eval_scope, Meta.parse(hierarchy["type"]))
+    end
+
+    return _load(type, hierarchy; eval_scope)
+end
+
+"""
+    _load(type, hierarchy; eval_scope=@__MODULE__)
+This is a low-level method used for instantiating an agent of the specified `type`. It also instantiates all the inner sub-agents found within the given `hierarchy` dictionary. 
+"""
+function _load(type::Type{T},
+        hierarchy::AbstractDict;
+        eval_scope = @__MODULE__) where {T <: AbstractAlgebraicAgent}
+    agent = type(hierarchy["name"],
+        get(hierarchy, "arguments", [])...;
+        get(hierarchy, "keyword_arguments", [])...)
+    foreach(i -> entangle!(agent, load(i; eval_scope)), get(hierarchy, "inners", []))
+
+    # load interactions into Opera
+    haskey(hierarchy, "opera") &&
+        load_opera!(getopera(agent), hierarchy["opera"]; eval_scope)
+
+    agent
+end
+
+"""
+    save(agent)
+Save an agent hierarchy into a dictionary.
+
+By default, each agent is represented as a dictionary with fields
+- `type`: type of the agent,
+- `name`: name of the agent,
+- `arguments` (unless empty): a vector of agent's properties, excluding common interface properties (such as `name`, `uuid`, `parent`, `opera`, etc.)
+- `inners` (unless empty): a vector with inner agents' representations.
+
+See also [`load`](@ref).
+
+# Example
+```julia
+dump = save(agent)
+
+# output
+Dict(
+    "type" => FreeAgent, "name" => "system", 
+    "inners" => [
+        Dict("name" => "alice", "type" => MyAgent{Float64}, "arguments" => Any[0.0, 1.0]),
+        Dict("name" => "bob", "type" => MyAgent{Float64}, "arguments" => Any[0.0, 1.5]),
+    ]
+)
+```
+"""
+function save(agent::AbstractAlgebraicAgent)
+    extra_fields = [getproperty(agent, p)
+                    for p in setdiff(propertynames(agent), common_interface_fields)]
+
+    if isempty(extra_fields)
+        agent_args = Dict("type" => typeof(agent), "name" => getname(agent))
+    else
+        agent_args = Dict("type" => typeof(agent),
+            "name" => getname(agent),
+            "arguments" => extra_fields)
+    end
+
+    if isempty(inners(agent))
+        return agent_args
+    else
+        return merge(agent_args,
+            Dict("inners" => map(i -> save(i), values(inners(agent)))))
+    end
 end
